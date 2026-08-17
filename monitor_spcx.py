@@ -7,6 +7,8 @@ import yfinance as yf
 from apscheduler.schedulers.blocking import BlockingScheduler
 from dotenv import load_dotenv
 
+from log_setup import setup_logging
+
 load_dotenv()  # carrega .env da pasta corrente (ou parent)
 
 # ---------------------------------------------------------------------------
@@ -28,11 +30,7 @@ COOLDOWN_MINUTES = 20
 _last_alert: dict[str, datetime] = {}   # ticker -> last alert timestamp
 _spcx_ref_price: float | None = None    # previous close used as SPCX reference
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s  %(levelname)-8s %(message)s",
-    datefmt="%Y-%m-%d %H:%M:%S",
-)
+setup_logging(level=logging.INFO)
 log = logging.getLogger(__name__)
 
 
