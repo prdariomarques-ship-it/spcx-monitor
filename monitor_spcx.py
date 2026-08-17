@@ -1,6 +1,7 @@
 import os
 import logging
 from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
 
 import requests
 import yfinance as yf
@@ -23,6 +24,9 @@ SPCX_BAND_PCT = 0.05   # ±5%
 
 POLL_INTERVAL_SECONDS = 60
 COOLDOWN_MINUTES = 20
+
+B3_TZ = ZoneInfo("America/Sao_Paulo")
+NYSE_TZ = ZoneInfo("America/New_York")
 
 # ---------------------------------------------------------------------------
 # State
@@ -48,6 +52,24 @@ def send_telegram(message: str) -> None:
         log.info("Telegram alert sent.")
     except requests.RequestException as exc:
         log.error("Failed to send Telegram alert: %s", exc)
+
+
+def _b3_pregao_aberto() -> bool:
+    """SPCX34.SA (BDR) só negocia em pregão B3 — seg-sex 10h-18h BRT.
+    Fora disso o preço fica parado no fechamento anterior; sem esse filtro
+    o monitor re-alertava o mesmo preço estático a cada cooldown, à noite
+    inteira (bug real observado em produção)."""
+    now = datetime.now(B3_TZ)
+    return now.weekday() < 5 and 10 <= now.hour < 18
+
+
+def _nyse_pregao_aberto() -> bool:
+    """SPCX (ação EUA) só negocia em pregão NYSE — seg-sex ~9h30-16h horário de NY."""
+    now = datetime.now(NYSE_TZ)
+    if now.weekday() >= 5:
+        return False
+    minutes = now.hour * 60 + now.minute
+    return 9 * 60 + 30 <= minutes < 16 * 60
 
 
 def _in_cooldown(ticker: str) -> bool:
@@ -108,6 +130,8 @@ def fetch_prev_close(ticker: str) -> float | None:
 # Check logic
 # ---------------------------------------------------------------------------
 def check_spcx34() -> None:
+    if not _b3_pregao_aberto():
+        return
     ticker = "SPCX34.SA"
     price = fetch_price(ticker)
     if price is None:
@@ -133,6 +157,8 @@ def check_spcx34() -> None:
 
 
 def check_spcx() -> None:
+    if not _nyse_pregao_aberto():
+        return
     global _spcx_ref_price
     ticker = "SPCX"
 
