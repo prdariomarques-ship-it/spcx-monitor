@@ -1,6 +1,7 @@
 import os
 import logging
 from datetime import datetime, timedelta
+from pathlib import Path
 from zoneinfo import ZoneInfo
 
 import requests
@@ -10,13 +11,17 @@ from dotenv import load_dotenv
 
 from log_setup import setup_logging
 
-load_dotenv()  # carrega .env da pasta corrente (ou parent)
+# Use o diretório do programa, não o diretório em que o systemd iniciou o
+# processo. Sem isso, um restart pode deixar o bot sem credenciais mesmo com o
+# .env correto ao lado do código.
+BASE_DIR = Path(__file__).resolve().parent
+load_dotenv(dotenv_path=BASE_DIR / ".env")
 
 # ---------------------------------------------------------------------------
 # Configuração — defina as variáveis no arquivo .env
 # ---------------------------------------------------------------------------
-TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN", "")
-TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "")
+TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN", "").strip()
+TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "").strip()
 
 SPCX34_UPPER = 57.74
 SPCX34_LOWER = 54.50
@@ -41,17 +46,29 @@ log = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 # Telegram
 # ---------------------------------------------------------------------------
-def send_telegram(message: str) -> None:
+def send_telegram(message: str) -> bool:
+    """Envia uma mensagem e informa se o Telegram a aceitou."""
     if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID:
         log.warning("Telegram not configured — would have sent: %s", message)
-        return
+        return False
+
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
     try:
         resp = requests.post(url, json={"chat_id": TELEGRAM_CHAT_ID, "text": message}, timeout=10)
         resp.raise_for_status()
+        payload = resp.json()
+        if not payload.get("ok", False):
+            log.error("Telegram rejected the message: %s", payload.get("description", "unknown error"))
+            return False
         log.info("Telegram alert sent.")
+        return True
     except requests.RequestException as exc:
-        log.error("Failed to send Telegram alert: %s", exc)
+        # O texto de HTTPError pode incluir a URL — e, portanto, o token do bot.
+        log.error("Failed to send Telegram alert (%s).", type(exc).__name__)
+        return False
+    except ValueError:
+        log.error("Telegram returned an invalid JSON response.")
+        return False
 
 
 def _b3_pregao_aberto() -> bool:
@@ -152,8 +169,8 @@ def check_spcx34() -> None:
             f"Hora: {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}"
         )
         log.info("ALERT: %s", msg)
-        send_telegram(msg)
-        _mark_alert(ticker)
+        if send_telegram(msg):
+            _mark_alert(ticker)
 
 
 def check_spcx() -> None:
@@ -192,8 +209,8 @@ def check_spcx() -> None:
             f"Hora: {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}"
         )
         log.info("ALERT: %s", msg)
-        send_telegram(msg)
-        _mark_alert(ticker)
+        if send_telegram(msg):
+            _mark_alert(ticker)
 
 
 # ---------------------------------------------------------------------------
@@ -209,6 +226,10 @@ def main() -> None:
     if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID:
         log.warning(
             "TELEGRAM_TOKEN or TELEGRAM_CHAT_ID not set — alerts will only be logged."
+        )
+    else:
+        send_telegram(
+            "✅ Monitor SPCX iniciado. Alertas serão enviados durante o pregão."
         )
 
     scheduler = BlockingScheduler()
